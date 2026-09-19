@@ -1,12 +1,16 @@
+import CoreGraphics
 import Foundation
 
 /// Which Journal shelf a row lives on. Raw values double as sub-tab keys.
+/// Shards are the game's readable datashards (`onscreen` entries); Net is
+/// the browsable net pages.
 enum Shelf: String, CaseIterable, Sendable {
-    case shards, mail, files, quests, tarot
+    case shards, net, mail, files, quests, tarot
 
     var title: String {
         switch self {
         case .shards: return "Shards"
+        case .net: return "Net"
         case .mail: return "Mail"
         case .files: return "Files"
         case .quests: return "Quests"
@@ -14,6 +18,21 @@ enum Shelf: String, CaseIterable, Sendable {
         }
     }
 
+}
+
+/// A picture in the dataset's `images` table: its key plus the pixel size,
+/// known up front so layouts never jump when the bytes arrive.
+struct Picture: Hashable, Sendable {
+    let key: String
+    let width: Int
+    let height: Int
+
+    var aspect: CGFloat { CGFloat(width) / CGFloat(max(height, 1)) }
+    var isPortrait: Bool { height > width }
+
+    /// Net pages also carry buttons, stars and separators; only pictures
+    /// with some size to them are worth showing outside the page layout.
+    var isGalleryWorthy: Bool { min(width, height) >= 96 }
 }
 
 /// One readable thing: what the list shows and what the reader typesets.
@@ -29,7 +48,13 @@ struct Document: Hashable, Sendable {
     let meta: String
     let body: String
     let icon: String
+    var picture: Picture? = nil
+    var thumbnail: Picture? = nil
+    var gallery: [Picture] = []
     var blocks: [ReaderBlock] { ReaderText.blocks(for: body) }
+
+    /// What a list row shows: the game's own small version when it has one.
+    var listPicture: Picture? { thumbnail ?? picture }
 }
 
 enum ReaderBlock: Hashable, Sendable {
@@ -44,6 +69,7 @@ struct Contact: Hashable, Sendable {
     let contactType: String?
     let messageCount: Int
     let lastLine: String
+    let avatar: Picture?
 }
 
 struct PhoneLine: Hashable, Sendable {

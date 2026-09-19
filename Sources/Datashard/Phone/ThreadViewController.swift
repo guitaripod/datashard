@@ -7,12 +7,14 @@ import UIKit
 final class ThreadViewController: UIViewController {
     private let contact: Contact
     private let store: JournalStore
+    private let images: ImageStore
     private let scrollView = UIScrollView()
     private let column = UIStackView()
 
-    init(contact: Contact, store: JournalStore) {
+    init(contact: Contact, store: JournalStore, images: ImageStore) {
         self.contact = contact
         self.store = store
+        self.images = images
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -92,10 +94,22 @@ final class ThreadViewController: UIViewController {
         let label = UILabel()
         label.font = GameFont.mono(11)
         label.textColor = Theme.dim
+        label.numberOfLines = 2
         let threads = Set(lines.map(\.conversation)).count
         let kind = contact.contactType.map { " · " + $0 } ?? ""
         label.setTracked("\(lines.count) lines · \(threads) conversations\(kind)", tracking: 1.4)
-        return label
+        guard let avatar = contact.avatar else { return label }
+        let portrait = PictureView()
+        portrait.show(avatar, from: images, fitting: 56)
+        portrait.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            portrait.widthAnchor.constraint(equalToConstant: 56),
+            portrait.heightAnchor.constraint(equalToConstant: 56),
+        ])
+        let row = UIStackView(arrangedSubviews: [portrait, label])
+        row.spacing = 12
+        row.alignment = .center
+        return row
     }
 
     private func makeConversationRule(_ title: String) -> UIView {

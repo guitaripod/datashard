@@ -1,8 +1,9 @@
 # Datashard
 
-Offline reader for everything written in Cyberpunk 2077 — shards, codex, emails, files, quests,
-tarot, phone threads and every spoken line — in the game's pause-menu skin. Programmatic UIKit,
-built and deployed from Linux with [xtool](https://github.com/xtool-org/xtool).
+Offline reader for everything written in Cyberpunk 2077 — shards, net pages, codex, emails,
+files, quests, tarot, phone threads and every spoken line, with the game's codex art, tarot
+cards and contact avatars — in the game's pause-menu skin. Programmatic UIKit, built and deployed
+from Linux with [xtool](https://github.com/xtool-org/xtool).
 
 ![Screenshots](screenshots.jpg)
 
@@ -11,7 +12,7 @@ Journal · Codex · Phone · Search, over a bundled SQLite export of
 it is generated from your own install and never committed:
 
 ```bash
-cpdb build "/path/to/Cyberpunk 2077" cp2077.sqlite
+cpdb build "/path/to/Cyberpunk 2077" cp2077.sqlite --images
 cpdb cp2077.sqlite export Sources/Datashard/Resources/cp2077-reader.sqlite
 xtool dev
 ```

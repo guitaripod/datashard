@@ -5,7 +5,7 @@ import GRDB
 /// Opened straight from the resource bundle: it never changes at runtime, so
 /// nothing is copied and no journal is ever written next to it.
 final class Dataset: Sendable {
-    static let requiredSchemaVersion = 3
+    static let requiredSchemaVersion = 4
 
     let queue: DatabaseQueue
     let schemaVersion: Int

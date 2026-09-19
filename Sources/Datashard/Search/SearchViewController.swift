@@ -6,6 +6,7 @@ import UIKit
 /// dataset's snippet() produces, in cyan.
 final class SearchViewController: UIViewController, UISearchResultsUpdating, UICollectionViewDelegate {
     private let store: JournalStore
+    private let images: ImageStore
     private let reading: ReadingStore
     private let searchController = UISearchController(searchResultsController: nil)
     private let emptyLabel = UILabel()
@@ -15,8 +16,9 @@ final class SearchViewController: UIViewController, UISearchResultsUpdating, UIC
     private var hitsByKey: [String: SearchHit] = [:]
     private var searchTask: Task<Void, Never>?
 
-    init(store: JournalStore, reading: ReadingStore) {
+    init(store: JournalStore, images: ImageStore, reading: ReadingStore) {
         self.store = store
+        self.images = images
         self.reading = reading
         super.init(nibName: nil, bundle: nil)
     }
@@ -138,11 +140,12 @@ final class SearchViewController: UIViewController, UISearchResultsUpdating, UIC
                         documents: siblings,
                         index: siblings.firstIndex(of: doc) ?? 0,
                         crumb: ["Search", doc.groupTitle],
+                        images: images,
                         reading: reading
                     )
                     navigationController?.pushViewController(reader, animated: true)
                 case let .thread(contact):
-                    navigationController?.pushViewController(ThreadViewController(contact: contact, store: store), animated: true)
+                    navigationController?.pushViewController(ThreadViewController(contact: contact, store: store, images: images), animated: true)
                 case let .scene(name, lines, highlight):
                     navigationController?.pushViewController(SceneViewController(scene: name, lines: lines, highlight: highlight), animated: true)
                 }
@@ -220,12 +223,21 @@ final class HitRowContentView: UIView, UIContentView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    private static func label(for kind: String) -> String {
+        switch kind {
+        case "onscreen": return "Shard"
+        case "shard_text", "internet_page": return "Net"
+        case "codex_entry", "codex_description": return "Codex"
+        default: return ReaderText.humanize(kind)
+        }
+    }
+
     private func apply() {
         guard let c = configuration as? HitRowConfiguration else { return }
         let hit = c.hit
         let isDialogue = hit.source == .dialogue
         sourceLabel.textColor = isDialogue ? Theme.red : Theme.cyan
-        sourceLabel.setTracked(isDialogue ? "Dialogue" : ReaderText.humanize(hit.kind), tracking: 1.4)
+        sourceLabel.setTracked(isDialogue ? "Dialogue" : Self.label(for: hit.kind), tracking: 1.4)
         contextLabel.setTracked(hit.title.isEmpty ? hit.context : hit.title, tracking: 0.8, uppercase: false)
         edge.backgroundColor = isDialogue ? Theme.redDim : Theme.cyanDim
         let attributed = NSMutableAttributedString()

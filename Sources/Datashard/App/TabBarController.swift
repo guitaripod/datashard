@@ -2,10 +2,12 @@ import UIKit
 
 final class TabBarController: UITabBarController {
     private let store: JournalStore
+    private let images: ImageStore
     private let reading: ReadingStore
 
-    init(store: JournalStore, reading: ReadingStore) {
+    init(store: JournalStore, images: ImageStore, reading: ReadingStore) {
         self.store = store
+        self.images = images
         self.reading = reading
         super.init(nibName: nil, bundle: nil)
     }
@@ -19,22 +21,30 @@ final class TabBarController: UITabBarController {
         NavigationStyle.apply(to: tabBar)
 
         let journal = wrap(
-            DocumentListViewController(mode: .journal, store: store, reading: reading),
+            DocumentListViewController(mode: .journal, store: store, images: images, reading: reading),
             title: "Journal", symbol: "book.pages", selected: "book.pages.fill"
         )
         let codex = wrap(
-            DocumentListViewController(mode: .codex, store: store, reading: reading),
+            DocumentListViewController(mode: .codex, store: store, images: images, reading: reading),
             title: "Codex", symbol: "text.book.closed", selected: "text.book.closed.fill"
         )
         let phone = wrap(
-            ContactsViewController(store: store),
+            ContactsViewController(store: store, images: images),
             title: "Phone", symbol: "phone", selected: "phone.fill"
         )
         let search = wrap(
-            SearchViewController(store: store, reading: reading),
+            SearchViewController(store: store, images: images, reading: reading),
             title: "Search", symbol: "magnifyingglass", selected: "magnifyingglass"
         )
         viewControllers = [journal, codex, phone, search]
+    }
+
+    /// Jumps straight to a screen; used when the app is launched from the
+    /// build machine with a `DATASHARD_OPEN` route to screenshot a page.
+    func open(_ route: LaunchRoute) {
+        selectedIndex = route.tab
+        guard let list = (viewControllers?[route.tab] as? UINavigationController)?.viewControllers.first as? DocumentListViewController else { return }
+        list.openWhenLoaded(id: route.documentID, shelf: route.shelf)
     }
 
     private func wrap(_ root: UIViewController, title: String, symbol: String, selected: String) -> UINavigationController {

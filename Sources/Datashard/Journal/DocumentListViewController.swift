@@ -10,6 +10,7 @@ final class DocumentListViewController: UIViewController {
 
     private let mode: Mode
     private let store: JournalStore
+    private let images: ImageStore
     private let reading: ReadingStore
     private let subTabs = SubTabsView()
     private let rail = ChipRail()
@@ -25,12 +26,14 @@ final class DocumentListViewController: UIViewController {
     private var showSavedOnly = false
     private var loadTask: Task<Void, Never>?
     private var savedButton: UIBarButtonItem!
+    private var pendingOpenID: Int?
 
     private static let allKey = "*"
 
-    init(mode: Mode, store: JournalStore, reading: ReadingStore) {
+    init(mode: Mode, store: JournalStore, images: ImageStore, reading: ReadingStore) {
         self.mode = mode
         self.store = store
+        self.images = images
         self.reading = reading
         super.init(nibName: nil, bundle: nil)
     }
@@ -129,7 +132,8 @@ final class DocumentListViewController: UIViewController {
             cell.contentConfiguration = DocumentRowConfiguration(
                 document: document,
                 isRead: readIDs.contains(id),
-                isBookmarked: bookmarkIDs.contains(id)
+                isBookmarked: bookmarkIDs.contains(id),
+                images: images
             )
             cell.backgroundConfiguration = .clear()
         }
@@ -170,6 +174,10 @@ final class DocumentListViewController: UIViewController {
                 bookmarkIDs = savedSet
                 rebuildRail()
                 applySnapshot(animating: false)
+                if let id = pendingOpenID, let doc = documentsByID[id] {
+                    pendingOpenID = nil
+                    open(doc)
+                }
                 if mode == .journal {
                     let counts = try await store.shelfCounts()
                     for (shelf, count) in counts { subTabs.setCount(count, for: shelf.rawValue) }
@@ -188,7 +196,7 @@ final class DocumentListViewController: UIViewController {
             if counts[doc.group] == nil { order.append(doc.group) }
             counts[doc.group, default: 0] += 1
         }
-        let sorted = mode == .journal && shelf == .shards
+        let sorted = mode == .journal && (shelf == .shards || shelf == .net)
             ? order.sorted { (counts[$0] ?? 0, $1) > (counts[$1] ?? 0, $0) }
             : order
         var chips = [ChipRail.Chip(key: Self.allKey, title: "All", count: allDocuments.count)]
@@ -237,12 +245,22 @@ final class DocumentListViewController: UIViewController {
         applySnapshot(animating: true)
     }
 
+    /// Opens the document once its shelf has loaded (launch routes only).
+    func openWhenLoaded(id: Int?, shelf target: Shelf?) {
+        pendingOpenID = id
+        if let target, mode == .journal, target != shelf {
+            shelf = target
+            subTabs.select(target.rawValue)
+        }
+    }
+
     private func open(_ document: Document) {
         let siblings = visibleDocuments
         let reader = ReaderViewController(
             documents: siblings,
             index: siblings.firstIndex(of: document) ?? 0,
             crumb: crumb(),
+            images: images,
             reading: reading
         )
         navigationController?.pushViewController(reader, animated: true)

@@ -4,13 +4,15 @@ import UIKit
 /// last thing they said.
 final class ContactsViewController: UIViewController, UICollectionViewDelegate {
     private let store: JournalStore
+    private let images: ImageStore
     private var collectionView: UICollectionView!
     private var dataSource: UICollectionViewDiffableDataSource<Int, Int>!
     private var contacts: [Contact] = []
     private var contactsByID: [Int: Contact] = [:]
 
-    init(store: JournalStore) {
+    init(store: JournalStore, images: ImageStore) {
         self.store = store
+        self.images = images
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -39,7 +41,7 @@ final class ContactsViewController: UIViewController, UICollectionViewDelegate {
 
         let registration = UICollectionView.CellRegistration<UICollectionViewListCell, Int> { [weak self] cell, _, id in
             guard let contact = self?.contactsByID[id] else { return }
-            cell.contentConfiguration = ContactRowConfiguration(contact: contact)
+            cell.contentConfiguration = ContactRowConfiguration(contact: contact, images: self?.images)
             cell.backgroundConfiguration = .clear()
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, indexPath, id in
@@ -75,7 +77,7 @@ final class ContactsViewController: UIViewController, UICollectionViewDelegate {
     }
 
     func open(_ contact: Contact) {
-        navigationController?.pushViewController(ThreadViewController(contact: contact, store: store), animated: true)
+        navigationController?.pushViewController(ThreadViewController(contact: contact, store: store, images: images), animated: true)
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
@@ -87,9 +89,13 @@ final class ContactsViewController: UIViewController, UICollectionViewDelegate {
 
 struct ContactRowConfiguration: UIContentConfiguration, Hashable {
     let contact: Contact
+    let images: ImageStore?
 
     func makeContentView() -> UIView & UIContentView { ContactRowContentView(configuration: self) }
     func updated(for state: UIConfigurationState) -> ContactRowConfiguration { self }
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.contact == rhs.contact }
+    func hash(into hasher: inout Hasher) { hasher.combine(contact) }
 }
 
 final class ContactRowContentView: UIView, UIContentView {
@@ -98,6 +104,7 @@ final class ContactRowContentView: UIView, UIContentView {
     private let panel = UIView()
     private let edge = UIView()
     private let avatar = UILabel()
+    private let portrait = PictureView()
     private let nameLabel = UILabel()
     private let lastLabel = UILabel()
     private let countLabel = UILabel()
@@ -114,6 +121,9 @@ final class ContactRowContentView: UIView, UIContentView {
         avatar.font = GameFont.display(16, .bold)
         avatar.textAlignment = .center
         avatar.translatesAutoresizingMaskIntoConstraints = false
+        portrait.translatesAutoresizingMaskIntoConstraints = false
+        portrait.isUserInteractionEnabled = false
+        avatar.addSubview(portrait)
 
         nameLabel.font = GameFont.display(17, .bold)
         nameLabel.textColor = Theme.ink
@@ -146,6 +156,10 @@ final class ContactRowContentView: UIView, UIContentView {
             edge.widthAnchor.constraint(equalToConstant: 2),
             avatar.widthAnchor.constraint(equalToConstant: 44),
             avatar.heightAnchor.constraint(equalToConstant: 44),
+            portrait.topAnchor.constraint(equalTo: avatar.topAnchor),
+            portrait.bottomAnchor.constraint(equalTo: avatar.bottomAnchor),
+            portrait.leadingAnchor.constraint(equalTo: avatar.leadingAnchor),
+            portrait.trailingAnchor.constraint(equalTo: avatar.trailingAnchor),
             row.topAnchor.constraint(equalTo: panel.topAnchor, constant: 9),
             row.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -9),
             row.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 8),
@@ -163,6 +177,10 @@ final class ContactRowContentView: UIView, UIContentView {
         avatar.text = String(JournalStore.abbreviation(c.contact.name).prefix(2))
         avatar.backgroundColor = fixer ? Theme.red : Theme.cyan
         avatar.textColor = fixer ? .white : Theme.cyanInk
+        portrait.isHidden = c.contact.avatar == nil || c.images == nil
+        if let images = c.images {
+            portrait.show(c.contact.avatar, from: images, fitting: 44)
+        }
         nameLabel.setTracked(c.contact.name, tracking: 0.6)
         lastLabel.text = c.contact.lastLine.isEmpty ? "—" : c.contact.lastLine
         let count = NSMutableAttributedString(string: "\(c.contact.messageCount)\n", attributes: [.font: GameFont.mono(12, .bold), .foregroundColor: Theme.cyan])

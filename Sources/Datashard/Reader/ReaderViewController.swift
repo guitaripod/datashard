@@ -7,6 +7,7 @@ final class ReaderViewController: UIViewController, UIScrollViewDelegate {
     private let documents: [Document]
     private var index: Int
     private let crumbParts: [String]
+    private let images: ImageStore
     private let reading: ReadingStore
     private var isBookmarked = false
     private var markedRead = false
@@ -17,6 +18,11 @@ final class ReaderViewController: UIViewController, UIScrollViewDelegate {
     private let scrollView = UIScrollView()
     private let crumb = UILabel()
     private let frame = UIView()
+    private let hero = PictureView()
+    private var heroConstraints: [NSLayoutConstraint] = []
+    private var innerTop: NSLayoutConstraint!
+    private let gallery = UIScrollView()
+    private let galleryRow = UIStackView()
     private let kicker = UILabel()
     private let idLabel = UILabel()
     private let titleLabel = GlitchTitleLabel(size: 30)
@@ -30,10 +36,11 @@ final class ReaderViewController: UIViewController, UIScrollViewDelegate {
 
     private var document: Document { documents[index] }
 
-    init(documents: [Document], index: Int, crumb: [String], reading: ReadingStore) {
+    init(documents: [Document], index: Int, crumb: [String], images: ImageStore, reading: ReadingStore) {
         self.documents = documents
         self.index = index
         self.crumbParts = crumb
+        self.images = images
         self.reading = reading
         super.init(nibName: nil, bundle: nil)
     }
@@ -77,6 +84,8 @@ final class ReaderViewController: UIViewController, UIScrollViewDelegate {
         topRule.backgroundColor = Theme.red
         topRule.translatesAutoresizingMaskIntoConstraints = false
         frame.addSubview(topRule)
+        hero.translatesAutoresizingMaskIntoConstraints = false
+        frame.addSubview(hero)
 
         kicker.font = GameFont.mono(11)
         kicker.textColor = Theme.red
@@ -96,14 +105,23 @@ final class ReaderViewController: UIViewController, UIScrollViewDelegate {
         bodyStack.axis = .vertical
         bodyStack.spacing = 12
 
-        let inner = UIStackView(arrangedSubviews: [kickerRow, titleLabel, metaLabel, bar, bodyStack])
+        gallery.showsHorizontalScrollIndicator = false
+        gallery.alwaysBounceHorizontal = true
+        galleryRow.axis = .horizontal
+        galleryRow.spacing = 8
+        galleryRow.translatesAutoresizingMaskIntoConstraints = false
+        gallery.addSubview(galleryRow)
+
+        let inner = UIStackView(arrangedSubviews: [kickerRow, titleLabel, metaLabel, bar, gallery, bodyStack])
         inner.axis = .vertical
         inner.spacing = 6
         inner.setCustomSpacing(10, after: kickerRow)
         inner.setCustomSpacing(12, after: metaLabel)
         inner.setCustomSpacing(14, after: bar)
+        inner.setCustomSpacing(14, after: gallery)
         inner.translatesAutoresizingMaskIntoConstraints = false
         frame.addSubview(inner)
+        innerTop = inner.topAnchor.constraint(equalTo: hero.bottomAnchor, constant: 16)
 
         nextView.fill = Theme.panel2
         nextView.cut = Theme.cutSmall
@@ -159,8 +177,17 @@ final class ReaderViewController: UIViewController, UIScrollViewDelegate {
             topRule.trailingAnchor.constraint(equalTo: frame.trailingAnchor),
             topRule.heightAnchor.constraint(equalToConstant: 2),
             bar.heightAnchor.constraint(equalToConstant: 3),
+            gallery.heightAnchor.constraint(equalToConstant: Self.galleryHeight),
+            galleryRow.topAnchor.constraint(equalTo: gallery.contentLayoutGuide.topAnchor),
+            galleryRow.bottomAnchor.constraint(equalTo: gallery.contentLayoutGuide.bottomAnchor),
+            galleryRow.leadingAnchor.constraint(equalTo: gallery.contentLayoutGuide.leadingAnchor),
+            galleryRow.trailingAnchor.constraint(equalTo: gallery.contentLayoutGuide.trailingAnchor),
+            galleryRow.heightAnchor.constraint(equalTo: gallery.frameLayoutGuide.heightAnchor),
 
-            inner.topAnchor.constraint(equalTo: frame.topAnchor, constant: 16),
+            hero.topAnchor.constraint(equalTo: topRule.bottomAnchor),
+            hero.leadingAnchor.constraint(equalTo: frame.leadingAnchor),
+            hero.trailingAnchor.constraint(equalTo: frame.trailingAnchor),
+            innerTop,
             inner.leadingAnchor.constraint(equalTo: frame.leadingAnchor, constant: 16),
             inner.trailingAnchor.constraint(equalTo: frame.trailingAnchor, constant: -16),
             inner.bottomAnchor.constraint(equalTo: frame.bottomAnchor, constant: -20),
@@ -180,6 +207,7 @@ final class ReaderViewController: UIViewController, UIScrollViewDelegate {
         kicker.setTracked(doc.kicker + " entry", tracking: 1.6)
         idLabel.setTracked("ID \(doc.id)", tracking: 1.6)
         titleLabel.text = doc.title
+        renderPictures(doc)
         metaLabel.setTracked([doc.meta, "\(doc.body.count) chars", ReaderText.readingTime(for: doc.body)].filter { !$0.isEmpty }.joined(separator: " · "), tracking: 1.2)
 
         bodyStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -210,6 +238,44 @@ final class ReaderViewController: UIViewController, UIScrollViewDelegate {
         scrollView.setContentOffset(CGPoint(x: 0, y: -scrollView.adjustedContentInset.top), animated: false)
         markedRead = false
         updateProgress()
+    }
+
+    private static let galleryHeight: CGFloat = 120
+    private static let heroMaxHeight: CGFloat = 440
+
+    /// The entry's art edge to edge at the top of the frame, its aspect kept;
+    /// tall art (tarot cards, portraits) is capped and letterboxed instead of
+    /// running off the screen. A net page's remaining pictures line up in a
+    /// scrolling strip under the meta line.
+    private func renderPictures(_ doc: Document) {
+        NSLayoutConstraint.deactivate(heroConstraints)
+        if let picture = doc.picture {
+            hero.isHidden = false
+            hero.imageContentMode = picture.isPortrait ? .scaleAspectFit : .scaleAspectFill
+            let aspect = hero.heightAnchor.constraint(equalTo: hero.widthAnchor, multiplier: 1 / picture.aspect)
+            aspect.priority = .defaultHigh
+            heroConstraints = [aspect, hero.heightAnchor.constraint(lessThanOrEqualToConstant: Self.heroMaxHeight)]
+            innerTop.constant = 16
+            hero.show(picture, from: images)
+        } else {
+            hero.isHidden = true
+            heroConstraints = [hero.heightAnchor.constraint(equalToConstant: 0)]
+            innerTop.constant = 16
+            hero.show(nil, from: images)
+        }
+        NSLayoutConstraint.activate(heroConstraints)
+
+        galleryRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        gallery.isHidden = doc.gallery.isEmpty
+        for picture in doc.gallery {
+            let view = PictureView()
+            view.imageContentMode = .scaleAspectFit
+            let width = min(max(Self.galleryHeight * picture.aspect, 72), 280)
+            view.widthAnchor.constraint(equalToConstant: width).isActive = true
+            view.show(picture, from: images, fitting: Self.galleryHeight * 2)
+            galleryRow.addArrangedSubview(view)
+        }
+        gallery.setContentOffset(.zero, animated: false)
     }
 
     private static func paragraph(_ text: String, dropCap: Bool) -> NSAttributedString {

@@ -7,12 +7,23 @@ struct DocumentRowConfiguration: UIContentConfiguration, Hashable {
     let document: Document
     let isRead: Bool
     let isBookmarked: Bool
+    let images: ImageStore
 
     func makeContentView() -> UIView & UIContentView {
         DocumentRowContentView(configuration: self)
     }
 
     func updated(for state: UIConfigurationState) -> DocumentRowConfiguration { self }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.document == rhs.document && lhs.isRead == rhs.isRead && lhs.isBookmarked == rhs.isBookmarked
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(document)
+        hasher.combine(isRead)
+        hasher.combine(isBookmarked)
+    }
 }
 
 final class DocumentRowContentView: UIView, UIContentView {
@@ -24,6 +35,7 @@ final class DocumentRowContentView: UIView, UIContentView {
     private let edge = UIView()
     private let badge = UILabel()
     private let badgeBox = UIView()
+    private let thumb = PictureView()
     private let titleLabel = UILabel()
     private let excerptLabel = UILabel()
     private let kickerLabel = UILabel()
@@ -54,6 +66,8 @@ final class DocumentRowContentView: UIView, UIContentView {
         badge.textAlignment = .center
         badge.translatesAutoresizingMaskIntoConstraints = false
         badgeBox.addSubview(badge)
+        thumb.translatesAutoresizingMaskIntoConstraints = false
+        badgeBox.addSubview(thumb)
 
         titleLabel.font = GameFont.display(17, .bold)
         titleLabel.textColor = Theme.ink
@@ -90,10 +104,14 @@ final class DocumentRowContentView: UIView, UIContentView {
             edge.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
             edge.widthAnchor.constraint(equalToConstant: 2),
 
-            badgeBox.widthAnchor.constraint(equalToConstant: 32),
-            badgeBox.heightAnchor.constraint(equalToConstant: 32),
+            badgeBox.widthAnchor.constraint(equalToConstant: 48),
+            badgeBox.heightAnchor.constraint(equalToConstant: 48),
             badge.centerXAnchor.constraint(equalTo: badgeBox.centerXAnchor),
             badge.centerYAnchor.constraint(equalTo: badgeBox.centerYAnchor),
+            thumb.topAnchor.constraint(equalTo: badgeBox.topAnchor),
+            thumb.bottomAnchor.constraint(equalTo: badgeBox.bottomAnchor),
+            thumb.leadingAnchor.constraint(equalTo: badgeBox.leadingAnchor),
+            thumb.trailingAnchor.constraint(equalTo: badgeBox.trailingAnchor),
 
             row.topAnchor.constraint(equalTo: panel.topAnchor, constant: 10),
             row.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -10),
@@ -105,6 +123,8 @@ final class DocumentRowContentView: UIView, UIContentView {
     private func apply() {
         guard let c = configuration as? DocumentRowConfiguration else { return }
         badge.text = c.document.icon
+        thumb.isHidden = c.document.listPicture == nil
+        thumb.show(c.document.listPicture, from: c.images, fitting: 48)
         titleLabel.text = c.document.title
         excerptLabel.text = c.document.excerpt
         kickerLabel.setTracked(c.isBookmarked ? "Saved" : (c.isRead ? "Read" : c.document.kicker), tracking: 1.2)

@@ -15,7 +15,8 @@ final class JournalStore: Sendable {
 
     func documents(on shelf: Shelf) async throws -> [Document] {
         switch shelf {
-        case .shards: return try await shardPages()
+        case .shards: return try await shards()
+        case .net: return try await shardPages()
         case .mail: return try await emails()
         case .files: return try await files()
         case .quests: return try await quests()
@@ -26,41 +27,83 @@ final class JournalStore: Sendable {
     func shelfCounts() async throws -> [Shelf: Int] {
         try await dataset.queue.read { db in
             var counts: [Shelf: Int] = [:]
-            counts[.shards] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM v_shards WHERE body IS NOT NULL AND body <> ''") ?? 0
-            counts[.mail] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM v_emails WHERE body <> ''") ?? 0
-            counts[.files] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM journal WHERE kind = 'file' AND body <> ''") ?? 0
+            counts[.shards] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM journal WHERE \(Self.shardFilter)") ?? 0
+            counts[.net] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM v_shards WHERE body IS NOT NULL AND body <> ''") ?? 0
+            counts[.mail] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM v_emails WHERE body <> '' OR image IS NOT NULL") ?? 0
+            counts[.files] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM journal WHERE kind = 'file' AND (body <> '' OR json_extract(extra, '$.image') IS NOT NULL)") ?? 0
             counts[.quests] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM v_quests WHERE title <> '' AND (description IS NOT NULL OR objective_count > 0)") ?? 0
             counts[.tarot] = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM journal WHERE kind = 'tarot'") ?? 0
             return counts
         }
     }
 
+    /// The game's datashards: every `onscreen` entry under the two shard
+    /// folders (base game and Phantom Liberty name theirs differently),
+    /// leaving out tutorial and warning popups that share the entry class.
+    private static let shardFilter = """
+        kind = 'onscreen' AND body <> '' AND (path LIKE 'onscreens/emails/%' OR path LIKE 'onscreens/shards/%')
+        """
+
+    private func shards() async throws -> [Document] {
+        try await dataset.queue.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, path, title, body, json_extract(extra, '$.image') AS image FROM journal
+                WHERE \(Self.shardFilter) ORDER BY path
+                """)
+            let pictures = try Self.pictures(db, keys: rows.compactMap { $0["image"] })
+            return rows.map { row in
+                let path: String = row["path"]
+                let body: String = row["body"]
+                let group = Self.shardGroup(path)
+                let title: String = row["title"]
+                let code = Self.questCode(in: path)
+                return Document(
+                    id: row["id"],
+                    path: path,
+                    kicker: "Shard",
+                    title: title.isEmpty ? ReaderText.pageHeadline(body: body, pageID: path.split(separator: "/").last.map(String.init) ?? "shard") : title,
+                    excerpt: ReaderText.excerpt(from: body, excluding: title),
+                    group: group,
+                    groupTitle: group,
+                    meta: [group, code].compactMap { $0 }.joined(separator: " · "),
+                    body: body,
+                    icon: Self.abbreviation(group),
+                    picture: (row["image"] as String?).flatMap { pictures[$0] }
+                )
+            }
+        }
+    }
+
     private func shardPages() async throws -> [Document] {
         try await dataset.queue.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT p.id AS id, s.source, s.page_path, s.page_id, s.site_title, s.address, s.text_count, s.body
+                SELECT p.id AS id, s.source, s.page_path, s.page_id, s.site_title, s.address, s.text_count, s.body, s.images
                 FROM v_shards s
                 JOIN journal p ON p.kind = 'internet_page' AND p.path = s.page_path AND p.source = s.source
                 WHERE s.body IS NOT NULL AND s.body <> ''
                 ORDER BY s.site_title, s.page_path
                 """)
+            let pictures = try Self.pictures(db, keys: rows.flatMap { Self.keyList($0["images"]) })
             return rows.map { row in
                 let body: String = row["body"]
                 let site = Self.siteName(row["site_title"])
                 let pageID: String = row["page_id"]
                 let headline = ReaderText.pageHeadline(body: body, pageID: pageID)
                 let address: String? = row["address"]
+                let gallery = Self.keyList(row["images"]).compactMap { pictures[$0] }.filter(\.isGalleryWorthy)
                 return Document(
                     id: row["id"],
                     path: row["page_path"],
-                    kicker: "Shard",
+                    kicker: "Net",
                     title: headline,
                     excerpt: ReaderText.excerpt(from: body, excluding: headline),
                     group: site,
                     groupTitle: site,
                     meta: [address, "\(row["text_count"] as Int) texts"].compactMap { $0 }.joined(separator: " · "),
                     body: body,
-                    icon: Self.abbreviation(site)
+                    icon: Self.abbreviation(site),
+                    picture: gallery.first,
+                    gallery: Array(gallery.dropFirst())
                 )
             }
         }
@@ -69,9 +112,10 @@ final class JournalStore: Sendable {
     private func emails() async throws -> [Document] {
         try await dataset.queue.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT id, path, subject, sender, addressee, body FROM v_emails
-                WHERE body <> '' ORDER BY path
+                SELECT id, path, subject, sender, addressee, body, image FROM v_emails
+                WHERE body <> '' OR image IS NOT NULL ORDER BY path
                 """)
+            let pictures = try Self.pictures(db, keys: rows.compactMap { $0["image"] })
             return rows.map { row in
                 let path: String = row["path"]
                 let group = Self.mailGroup(path)
@@ -83,13 +127,14 @@ final class JournalStore: Sendable {
                     path: path,
                     kicker: "Email",
                     title: subject.isEmpty ? "(no subject)" : subject,
-                    excerpt: ReaderText.excerpt(from: row["body"]),
+                    excerpt: Self.excerptOrPicture(row["body"]),
                     group: group,
                     groupTitle: group,
                     meta: ["From " + (sender.isEmpty ? "unknown" : sender), addressee.isEmpty ? nil : "To " + addressee]
                         .compactMap { $0 }.joined(separator: " · "),
                     body: row["body"],
-                    icon: "MSG"
+                    icon: "MSG",
+                    picture: (row["image"] as String?).flatMap { pictures[$0] }
                 )
             }
         }
@@ -98,9 +143,10 @@ final class JournalStore: Sendable {
     private func files() async throws -> [Document] {
         try await dataset.queue.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT id, path, title, body FROM journal
-                WHERE kind = 'file' AND body <> '' ORDER BY path
+                SELECT id, path, title, body, json_extract(extra, '$.image') AS image FROM journal
+                WHERE kind = 'file' AND (body <> '' OR json_extract(extra, '$.image') IS NOT NULL) ORDER BY path
                 """)
+            let pictures = try Self.pictures(db, keys: rows.compactMap { $0["image"] })
             return rows.map { row in
                 let path: String = row["path"]
                 let group = Self.questCode(in: path) ?? "Misc"
@@ -110,12 +156,13 @@ final class JournalStore: Sendable {
                     path: path,
                     kicker: "File",
                     title: title.isEmpty ? ReaderText.humanize(path.split(separator: "/").last.map(String.init) ?? "file") : title,
-                    excerpt: ReaderText.excerpt(from: row["body"]),
+                    excerpt: Self.excerptOrPicture(row["body"]),
                     group: group,
                     groupTitle: group.uppercased(),
                     meta: "Document · \(group)",
                     body: row["body"],
-                    icon: "DOC"
+                    icon: "DOC",
+                    picture: (row["image"] as String?).flatMap { pictures[$0] }
                 )
             }
         }
@@ -163,9 +210,10 @@ final class JournalStore: Sendable {
     private func tarots() async throws -> [Document] {
         try await dataset.queue.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT id, title, body, json_extract(extra, '$.index') AS idx FROM journal
-                WHERE kind = 'tarot' ORDER BY idx, id
+                SELECT id, title, body, json_extract(extra, '$.index') AS idx, image FROM v_tarots
+                ORDER BY idx, id
                 """)
+            let pictures = try Self.pictures(db, keys: rows.compactMap { $0["image"] })
             return rows.map { row in
                 let index: Int? = row["idx"]
                 return Document(
@@ -178,7 +226,8 @@ final class JournalStore: Sendable {
                     groupTitle: "Major Arcana",
                     meta: index.map { "Card \($0)" } ?? "Card",
                     body: row["body"],
-                    icon: index.map { String(format: "%02d", $0) } ?? "XX"
+                    icon: index.map { String(format: "%02d", $0) } ?? "XX",
+                    picture: (row["image"] as String?).flatMap { pictures[$0] }
                 )
             }
         }
@@ -198,9 +247,10 @@ final class JournalStore: Sendable {
     func codexArticles() async throws -> [Document] {
         try await dataset.queue.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT id, entry_path, section, title, subtitle, body FROM v_codex
+                SELECT id, entry_path, section, title, subtitle, body, image, thumb FROM v_codex
                 WHERE body <> '' ORDER BY id
                 """)
+            let pictures = try Self.pictures(db, keys: rows.flatMap { [$0["image"], $0["thumb"]].compactMap { $0 } })
             return rows.map { row in
                 let section: String = row["section"] ?? "Codex"
                 let subtitle: String? = row["subtitle"]
@@ -214,7 +264,9 @@ final class JournalStore: Sendable {
                     groupTitle: section,
                     meta: [section, subtitle].compactMap { $0 }.joined(separator: " · "),
                     body: row["body"],
-                    icon: Self.abbreviation(section)
+                    icon: Self.abbreviation(section),
+                    picture: (row["image"] as String?).flatMap { pictures[$0] },
+                    thumbnail: (row["thumb"] as String?).flatMap { pictures[$0] }
                 )
             }
         }
@@ -224,8 +276,8 @@ final class JournalStore: Sendable {
 
     func contacts() async throws -> [Contact] {
         try await dataset.queue.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT c.id, c.path, c.name, c.contact_type, c.message_count,
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT c.id, c.path, c.name, c.contact_type, c.message_count, c.avatar,
                        (SELECT m.body FROM journal m
                          WHERE m.kind = 'phone_message' AND m.body <> '' AND m.source = c.source
                            AND m.path LIKE c.path || '/%'
@@ -233,14 +285,17 @@ final class JournalStore: Sendable {
                 FROM v_contacts c
                 WHERE c.message_count > 0
                 ORDER BY c.message_count DESC, c.name
-                """).map { row in
+                """)
+            let pictures = try Self.pictures(db, keys: rows.compactMap { $0["avatar"] })
+            return rows.map { row in
                 Contact(
                     id: row["id"],
                     path: row["path"],
                     name: row["name"],
                     contactType: row["contact_type"],
                     messageCount: row["message_count"],
-                    lastLine: (row["last_line"] as String? ?? "").replacingOccurrences(of: "\n", with: " ")
+                    lastLine: (row["last_line"] as String? ?? "").replacingOccurrences(of: "\n", with: " "),
+                    avatar: (row["avatar"] as String?).flatMap { pictures[$0] }
                 )
             }
         }
@@ -322,6 +377,8 @@ final class JournalStore: Sendable {
     private func journalTarget(for hit: SearchHit) async throws -> SearchTarget? {
         let path = hit.context
         switch hit.kind {
+        case "onscreen":
+            return pick(try await shards()) { $0.id == hit.id }
         case "shard_text", "internet_page":
             return pick(try await shardPages()) { $0.path == path }
         case "email":
@@ -376,6 +433,53 @@ final class JournalStore: Sendable {
                 DialogueLine(id: $0["id"], stringID: $0["string_id"], line: $0["line"])
             }
         }
+    }
+
+    // MARK: Pictures
+
+    func imageData(for picture: Picture) async throws -> Data? {
+        try await dataset.queue.read { db in
+            try Data.fetchOne(db, sql: "SELECT data FROM images WHERE key = ?", arguments: [picture.key])
+        }
+    }
+
+    /// Size and existence of every key in one query; a key without a row
+    /// (a build without images, or a part the game lost) simply resolves to nil.
+    private static func pictures(_ db: Database, keys: [String]) throws -> [String: Picture] {
+        let unique = Array(Set(keys))
+        guard !unique.isEmpty else { return [:] }
+        var found: [String: Picture] = [:]
+        for chunk in stride(from: 0, to: unique.count, by: 400).map({ Array(unique[$0..<min($0 + 400, unique.count)]) }) {
+            let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+            for row in try Row.fetchAll(db, sql: "SELECT key, width, height FROM images WHERE key IN (\(marks))", arguments: StatementArguments(chunk)) {
+                let key: String = row["key"]
+                found[key] = Picture(key: key, width: row["width"], height: row["height"])
+            }
+        }
+        return found
+    }
+
+    private static func excerptOrPicture(_ body: String) -> String {
+        body.isEmpty ? "Picture attachment" : ReaderText.excerpt(from: body)
+    }
+
+    /// `onscreens/<folder>/generic/[shards/]<category>/…` is a category shard
+    /// (the base game nests one folder deeper than Phantom Liberty); the
+    /// quest folders hold the ones picked up during a job.
+    static func shardGroup(_ path: String) -> String {
+        let parts = path.split(separator: "/").map(String.init)
+        guard parts.count > 3 else { return "Other" }
+        switch parts[2] {
+        case "generic":
+            let category = parts[3] == "shards" && parts.count > 4 ? parts[4] : parts[3]
+            return ReaderText.humanize(category)
+        case "quests": return "Quests"
+        default: return ReaderText.humanize(parts[2])
+        }
+    }
+
+    private static func keyList(_ joined: String?) -> [String] {
+        (joined ?? "").split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
 
     // MARK: Helpers

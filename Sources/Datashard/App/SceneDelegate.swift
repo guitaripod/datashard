@@ -18,7 +18,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         do {
             let dataset = try Dataset.bundled()
             let reading = try ReadingStore()
-            window.rootViewController = TabBarController(store: JournalStore(dataset: dataset), reading: reading)
+            let store = JournalStore(dataset: dataset)
+            let tabs = TabBarController(store: store, images: ImageStore(store: store), reading: reading)
+            window.rootViewController = tabs
+            LaunchRoute.fromEnvironment().map { tabs.open($0) }
         } catch {
             AppLogger.fault("Dataset failed to open: \(error)", .dataset, sync: true)
             window.rootViewController = DatasetFailureViewController(message: "\(error)")
