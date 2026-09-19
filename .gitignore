@@ -1,0 +1,10 @@
+.DS_Store
+/.build
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/
+/xtool
+
+# CD PROJEKT RED text, generated locally with `cpdb export`; never committed
+Sources/Datashard/Resources/*.sqlite
